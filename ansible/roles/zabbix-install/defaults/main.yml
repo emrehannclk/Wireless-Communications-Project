@@ -1,0 +1,19 @@
+---
+# Installation directory
+zabbix_install_dir: /opt/zabbix
+
+# Network configuration
+network_name: zbx-net
+
+# Database configuration
+zabbix_db_name: zabbix
+zabbix_db_user: zabbix
+zabbix_db_password: zabbixpass
+zabbix_db_root_password: zabbixpass
+
+# Port configuration
+zabbix_server_port: 10051
+zabbix_web_port: 8080
+
+# PHP configuration
+php_timezone: Europe/Istanbul 

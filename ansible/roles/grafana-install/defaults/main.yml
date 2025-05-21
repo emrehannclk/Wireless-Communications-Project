@@ -1,0 +1,20 @@
+---
+# Installation directory
+grafana_install_dir: /opt/grafana
+
+# Network configuration
+network_name: zabbix_zbx-net
+
+# Port configuration
+grafana_port: 3000
+
+# Admin credentials
+grafana_admin_user: admin
+grafana_admin_password: admin
+
+# Plugin configuration
+grafana_plugins:
+  - alexanderzobnin-zabbix-app
+
+# Security settings
+grafana_allow_signup: "false" 

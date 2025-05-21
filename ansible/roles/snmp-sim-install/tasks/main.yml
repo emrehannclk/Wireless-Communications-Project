@@ -1,0 +1,20 @@
+---
+- name: Create SNMP simulator directory
+  file:
+    path: "{{ snmp_install_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Copy docker-compose template
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ snmp_install_dir }}/docker-compose.yml"
+    mode: '0644'
+
+- name: Start SNMP simulator containers
+  shell: |
+    cd {{ snmp_install_dir }}
+    docker-compose up -d --remove-orphans
+  args:
+    executable: /bin/bash
+

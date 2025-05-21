@@ -1,0 +1,95 @@
+
+
+services:
+  snmp_switch:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_switch
+    ports:
+      - "161:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.8
+
+  snmp_router:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_router
+    ports:
+      - "162:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.6
+
+  snmp_ap1:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_ap1
+    ports:
+      - "163:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.7
+
+  snmp_ap2:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_ap2
+    ports:
+      - "164:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.9
+
+  snmp_ap3:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_ap3
+    ports:
+      - "165:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.5
+
+  snmp_ap4:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_ap4
+    ports:
+      - "166:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.10
+
+  snmp_switch1:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_switch1
+    ports:
+      - "167:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.11
+
+  snmp_switch2:
+    image: tandrup/snmpsim:latest
+    container_name: snmp_switch2
+    ports:
+      - "168:161/udp"
+    environment:
+      - SNMPSIM_SNMP_PORT=161
+    networks:
+      zabbix_net:
+        ipv4_address: 172.20.0.12
+
+networks:
+  zabbix_net:
+    external: true
+    name: zabbix_zbx-net

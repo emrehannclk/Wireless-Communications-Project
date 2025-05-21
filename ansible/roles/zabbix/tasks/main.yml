@@ -1,0 +1,1064 @@
+---
+- name: Include Zabbix variables
+  include_vars:
+    file: vars/main.yml
+
+- name: Include SNMP hosts variables
+  include_vars:
+    file: vars/snmp_hosts.yml
+
+- name: Login to Zabbix
+  zabbix_login:
+    server_url: "{{ zabbix_host }}"
+    user: "{{ zabbix_username }}"
+    password: "{{ zabbix_password }}"
+  register: login_result
+
+- debug:
+    var: login_result
+
+- name: Create host group in Zabbix
+  zabbix_group:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    group_name: "{{ group }}"
+  register: group_result
+
+- debug:
+    var: group_result
+
+# 🔧 Mattermost medya tipi için dinamik YAML üret
+- name: Render Mattermost media type template
+  template:
+    src: "mattermost.yaml.j2"
+    dest: "/tmp/mattermost.yaml"
+  vars:
+    bot_token: "{{ mattermost_bot_token }}"
+    mattermost_url: "{{ mattermost_server_url }}"
+    send_to: "{{ mattermost_send_to }}"
+
+# 📥 Render edilen YAML'yi oku
+- name: Read YAML into variable
+  slurp:
+    src: "/tmp/mattermost.yaml"
+  register: mattermost_yaml
+
+# 📡 Zabbix API ile media type import et
+- name: Import Mattermost media type
+  uri:
+    url: "{{ zabbix_host }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+    body:
+      jsonrpc: "2.0"
+      method: "configuration.import"
+      params:
+        format: "yaml"
+        rules:
+          mediaTypes:
+            createMissing: true
+            updateExisting: true
+        source: "{{ mattermost_yaml.content | b64decode }}"
+      auth: "{{ login_result.token }}"
+      id: 2
+  register: import_result
+
+- name: Debug import response
+  debug:
+    var: import_result.json
+
+- name: Debug import result
+  debug:
+    var: import_result
+
+- name: Debug add media result
+  debug:
+    var: add_media_result
+
+- name: Debug action result
+  debug:
+    var: action_result
+
+# ✅ 1. Get mediatype ID for Mattermost
+- name: Get mediatype ID for Mattermost
+  uri:
+    url: "{{ zabbix_host }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+    body:
+      jsonrpc: "2.0"
+      method: "mediatype.get"
+      params:
+        output: ["mediatypeid", "name"]
+        filter:
+          name: "Mattermost-Costum"
+      auth: "{{ login_result.token }}"
+      id: 3
+  register: media_info
+
+- name: Set mediatype ID fact
+  set_fact:
+    mattermost_media_id: "{{ media_info.json.result[0].mediatypeid }}"
+
+# ✅ 2. Get Admin user info
+- name: Get Admin user
+  uri:
+    url: "{{ zabbix_host }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+    body:
+      jsonrpc: "2.0"
+      method: "user.get"
+      params:
+        output: ["userid", "alias"]
+        filter:
+          alias: "Admin"
+      auth: "{{ login_result.token }}"
+      id: 4
+  register: user_info
+
+- name: Set Admin user ID
+  set_fact:
+    admin_user_id: "{{ user_info.json.result[0].userid }}"
+
+- name: Add Mattermost media to Admin user (via user.update)
+  uri:
+    url: "{{ zabbix_host }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+    body:
+      jsonrpc: "2.0"
+      method: "user.update"
+      params:
+        userid: "{{ admin_user_id }}"
+        medias:
+          - mediatypeid: "{{ mattermost_media_id }}"
+            sendto: "{{ mattermost_send_to }}"
+            active: 0
+            severity: 63
+            period: "1-7,00:00-24:00"
+      auth: "{{ login_result.token }}"
+      id: 5
+  register: add_media_result
+
+- name: Create Zabbix action for Mattermost alerts
+  uri:
+    url: "{{ zabbix_host }}/api_jsonrpc.php"
+    method: POST
+    body_format: json
+    headers:
+      Content-Type: "application/json"
+    body:
+      jsonrpc: "2.0"
+      method: "action.create"
+      params:
+        name: "Send Problem Alerts to Mattermost"
+        eventsource: 0
+        status: 0
+        esc_period: 60
+        filter:
+          evaltype: 0
+          conditions:
+            - conditiontype: 0
+              operator: 0
+              value: "{{ group_result.groupid }}"
+        operations:
+          - operationtype: 0
+            opmessage:
+              default_msg: 1
+              mediatypeid: "{{ mattermost_media_id }}"
+            opmessage_usr:
+              - userid: "{{ admin_user_id }}"
+        recovery_operations:
+          - operationtype: 0
+            opmessage:
+              default_msg: 1
+              mediatypeid: "{{ mattermost_media_id }}"
+            opmessage_usr:
+              - userid: "{{ admin_user_id }}"
+      auth: "{{ login_result.token }}"
+      id: 6
+  register: action_result
+
+- name: Show result
+  debug:
+    msg:
+      - "Media imported: {{ import_result.json.result | default('error') }}"
+      - "Media ID: {{ mattermost_media_id }}"
+      - "User ID: {{ admin_user_id }}"
+      - "Action result: {{ action_result.json.result | default(action_result.json.error) }}"
+      - "Add media result: {{ add_media_result.json.result | default(add_media_result.json.error) }}"
+
+
+- name: Add SNMP hosts to Zabbix
+  zabbix_host:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_name: "{{ item.name }}"
+    ip: "{{ item.ip }}"
+    group_id: "{{ group_result.groupid }}"
+    interface_type: "{{ item.type }}"
+    port: "{{ item.port }}"
+    template_name: "Mikrotik by SNMP"
+  loop: "{{ snmp_hosts }}"
+  register: host_results
+
+- name: Set ap1_result fact for snmp_ap1
+  set_fact:
+    ap1_result: "{{ host_results.results | selectattr('item.name', 'equalto', 'snmp_ap1') | first }}"
+
+- debug:
+    msg: "Added hosts: {{ host_results.results | map(attribute='hostid') | list }}"
+
+- name: Debug host results
+  debug:
+    var: host_results
+
+- name: Debug SNMP hosts
+  debug:
+    var: snmp_hosts
+
+- name: Add a test script item to each host
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Test Script Item for {{ item.item.name }}"
+    key: "test.script.item.{{ item.item.name }}"
+    script: "return 42;"
+    value_type: 3
+    delay: 1m
+    description: "Simple test script item for {{ item.item.name }}"
+  loop: "{{ host_results.results }}"
+
+# Access Point Metrics
+- name: Add Signal Strength metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Signal Strength"
+    key: "ap.signal.strength"
+    script: "return Math.floor(Math.random() * 20) + 60;"
+    value_type: 0
+    delay: 30s
+    description: "Current WiFi signal strength in dBm"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "signal"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Connected Clients metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Connected Clients"
+    key: "ap.clients.count"
+    script: "return Math.floor(Math.random() * 15) + 5;"
+    value_type: 3
+    delay: 1m
+    description: "Number of connected WiFi clients"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "clients"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Channel Utilization metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Channel Utilization"
+    key: "ap.channel.utilization"
+    script: "return Math.floor(Math.random() * 40) + 20;"
+    value_type: 0
+    delay: 1m
+    description: "Current channel utilization percentage"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "channel"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add SSID Status metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "SSID Status"
+    key: "ap.ssid.status"
+    script: "return Math.random() > 0.1 ? 1 : 0;"
+    value_type: 3
+    delay: 30s
+    description: "SSID availability status (1=up, 0=down)"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "status"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Channel Number metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Channel Number"
+    key: "ap.channel.number"
+    script: "return Math.floor(Math.random() * 11) + 1;"
+    value_type: 3
+    delay: 1m
+    description: "Current WiFi channel number"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "channel"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Noise Level metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Noise Level"
+    key: "ap.noise.level"
+    script: "return Math.floor(Math.random() * 10) - 90;"
+    value_type: 0
+    delay: 1m
+    description: "Current noise level in dBm"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "noise"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Data Rate metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Data Rate"
+    key: "ap.data.rate"
+    script: "return Math.floor(Math.random() * 300) + 100;"
+    value_type: 0
+    delay: 1m
+    description: "Current data rate in Mbps"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "performance"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Retry Rate metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Retry Rate"
+    key: "ap.retry.rate"
+    script: "return Math.floor(Math.random() * 5);"
+    value_type: 0
+    delay: 1m
+    description: "Current packet retry rate percentage"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "errors"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Error Rate metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Error Rate"
+    key: "ap.error.rate"
+    script: "return Math.floor(Math.random() * 2);"
+    value_type: 0
+    delay: 1m
+    description: "Current error rate percentage"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "errors"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Uptime metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Uptime"
+    key: "ap.uptime"
+    script: "return Math.floor(Math.random() * 86400) + 3600;"
+    value_type: 3
+    delay: 1m
+    description: "AP uptime in seconds"
+    tags:
+      - tag: "component"
+        value: "system"
+      - tag: "metric"
+        value: "uptime"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Temperature metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Temperature"
+    key: "ap.temperature"
+    script: "return Math.floor(Math.random() * 10) + 35;"
+    value_type: 0
+    delay: 1m
+    description: "AP temperature in Celsius"
+    tags:
+      - tag: "component"
+        value: "hardware"
+      - tag: "metric"
+        value: "temperature"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add Power Level metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Power Level"
+    key: "ap.power.level"
+    script: "return Math.floor(Math.random() * 5) + 15;"
+    value_type: 0
+    delay: 1m
+    description: "Current transmit power level in dBm"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "metric"
+        value: "power"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+# Access Point 2.4GHz Band Metrics
+- name: Add 2.4GHz Signal Strength metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "2.4GHz Signal Strength"
+    key: "ap.2.4ghz.signal.strength"
+    script: "return Math.floor(Math.random() * 20) + 60;"
+    value_type: 0
+    delay: 30s
+    description: "Current 2.4GHz WiFi signal strength in dBm"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "2.4ghz"
+      - tag: "metric"
+        value: "signal"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 2.4GHz Connected Clients metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "2.4GHz Connected Clients"
+    key: "ap.2.4ghz.clients.count"
+    script: "return Math.floor(Math.random() * 10) + 2;"
+    value_type: 3
+    delay: 1m
+    description: "Number of connected 2.4GHz WiFi clients"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "2.4ghz"
+      - tag: "metric"
+        value: "clients"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 2.4GHz Channel Utilization metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "2.4GHz Channel Utilization"
+    key: "ap.2.4ghz.channel.utilization"
+    script: "return Math.floor(Math.random() * 40) + 20;"
+    value_type: 0
+    delay: 1m
+    description: "Current 2.4GHz channel utilization percentage"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "2.4ghz"
+      - tag: "metric"
+        value: "channel"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 2.4GHz Channel Number metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "2.4GHz Channel Number"
+    key: "ap.2.4ghz.channel.number"
+    script: "return Math.floor(Math.random() * 11) + 1;"
+    value_type: 3
+    delay: 1m
+    description: "Current 2.4GHz WiFi channel number"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "2.4ghz"
+      - tag: "metric"
+        value: "channel"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 2.4GHz Data Rate metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "2.4GHz Data Rate"
+    key: "ap.2.4ghz.data.rate"
+    script: "return Math.floor(Math.random() * 150) + 50;"
+    value_type: 0
+    delay: 1m
+    description: "Current 2.4GHz data rate in Mbps"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "2.4ghz"
+      - tag: "metric"
+        value: "performance"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+# Access Point 5GHz Band Metrics
+- name: Add 5GHz Signal Strength metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "5GHz Signal Strength"
+    key: "ap.5ghz.signal.strength"
+    script: "return Math.floor(Math.random() * 15) + 65;"
+    value_type: 0
+    delay: 30s
+    description: "Current 5GHz WiFi signal strength in dBm"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "5ghz"
+      - tag: "metric"
+        value: "signal"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 5GHz Connected Clients metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "5GHz Connected Clients"
+    key: "ap.5ghz.clients.count"
+    script: "return Math.floor(Math.random() * 8) + 1;"
+    value_type: 3
+    delay: 1m
+    description: "Number of connected 5GHz WiFi clients"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "5ghz"
+      - tag: "metric"
+        value: "clients"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 5GHz Channel Utilization metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "5GHz Channel Utilization"
+    key: "ap.5ghz.channel.utilization"
+    script: "return Math.floor(Math.random() * 30) + 15;"
+    value_type: 0
+    delay: 1m
+    description: "Current 5GHz channel utilization percentage"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "5ghz"
+      - tag: "metric"
+        value: "channel"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 5GHz Channel Number metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "5GHz Channel Number"
+    key: "ap.5ghz.channel.number"
+    script: "return Math.floor(Math.random() * 24) + 36;"
+    value_type: 3
+    delay: 1m
+    description: "Current 5GHz WiFi channel number"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "5ghz"
+      - tag: "metric"
+        value: "channel"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+- name: Add 5GHz Data Rate metric for APs
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "5GHz Data Rate"
+    key: "ap.5ghz.data.rate"
+    script: "return Math.floor(Math.random() * 400) + 200;"
+    value_type: 0
+    delay: 1m
+    description: "Current 5GHz data rate in Mbps"
+    tags:
+      - tag: "component"
+        value: "wireless"
+      - tag: "band"
+        value: "5ghz"
+      - tag: "metric"
+        value: "performance"
+  loop: "{{ host_results.results }}"
+  when: "'ap' in item.item.name"
+
+# Router Metrics
+- name: Add CPU Load metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "CPU Load"
+    key: "router.cpu.load"
+    script: "return Math.floor(Math.random() * 30) + 10;"
+    value_type: 0
+    delay: 1m
+    description: "Current CPU utilization percentage"
+    tags:
+      - tag: "component"
+        value: "system"
+      - tag: "metric"
+        value: "cpu"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Memory Usage metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Memory Usage"
+    key: "router.memory.usage"
+    script: "return Math.floor(Math.random() * 20) + 60;"
+    value_type: 0
+    delay: 1m
+    description: "Current memory utilization percentage"
+    tags:
+      - tag: "component"
+        value: "system"
+      - tag: "metric"
+        value: "memory"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Interface Status metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Interface Status"
+    key: "router.interface.status"
+    script: "return Math.random() > 0.05 ? 1 : 0;"
+    value_type: 3
+    delay: 30s
+    description: "Main interface status (1=up, 0=down)"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "status"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Routing Table Size metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Routing Table Size"
+    key: "router.routes.count"
+    script: "return Math.floor(Math.random() * 50) + 100;"
+    value_type: 3
+    delay: 1m
+    description: "Number of routes in routing table"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "routes"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Interface Traffic metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Interface Traffic"
+    key: "router.interface.traffic"
+    script: "return Math.floor(Math.random() * 800) + 200;"
+    value_type: 0
+    delay: 1m
+    description: "Current interface traffic in Mbps"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "traffic"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Interface Errors metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Interface Errors"
+    key: "router.interface.errors"
+    script: "return Math.floor(Math.random() * 10);"
+    value_type: 3
+    delay: 1m
+    description: "Number of interface errors"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "errors"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add BGP Status metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "BGP Status"
+    key: "router.bgp.status"
+    script: "return Math.random() > 0.02 ? 1 : 0;"
+    value_type: 3
+    delay: 30s
+    description: "BGP session status (1=up, 0=down)"
+    tags:
+      - tag: "component"
+        value: "routing"
+      - tag: "metric"
+        value: "status"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add BGP Routes metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "BGP Routes"
+    key: "router.bgp.routes"
+    script: "return Math.floor(Math.random() * 1000) + 5000;"
+    value_type: 3
+    delay: 1m
+    description: "Number of BGP routes"
+    tags:
+      - tag: "component"
+        value: "routing"
+      - tag: "metric"
+        value: "routes"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Temperature metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Temperature"
+    key: "router.temperature"
+    script: "return Math.floor(Math.random() * 15) + 40;"
+    value_type: 0
+    delay: 1m
+    description: "Router temperature in Celsius"
+    tags:
+      - tag: "component"
+        value: "hardware"
+      - tag: "metric"
+        value: "temperature"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+- name: Add Fan Speed metric for Routers
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Fan Speed"
+    key: "router.fan.speed"
+    script: "return Math.floor(Math.random() * 2000) + 3000;"
+    value_type: 3
+    delay: 1m
+    description: "Fan speed in RPM"
+    tags:
+      - tag: "component"
+        value: "hardware"
+      - tag: "metric"
+        value: "fan"
+  loop: "{{ host_results.results }}"
+  when: "'router' in item.item.name"
+
+# Switch Metrics
+- name: Add Port Status metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Port Status"
+    key: "switch.port.status"
+    script: "return Math.random() > 0.02 ? 1 : 0;"
+    value_type: 3
+    delay: 30s
+    description: "Port status (1=up, 0=down)"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "status"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add Port Traffic metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Port Traffic"
+    key: "switch.port.traffic"
+    script: "return Math.floor(Math.random() * 500) + 100;"
+    value_type: 0
+    delay: 1m
+    description: "Current port traffic in Mbps"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "traffic"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add VLAN Count metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "VLAN Count"
+    key: "switch.vlan.count"
+    script: "return Math.floor(Math.random() * 5) + 5;"
+    value_type: 3
+    delay: 1m
+    description: "Number of active VLANs"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "vlan"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add MAC Table Size metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "MAC Table Size"
+    key: "switch.mac.count"
+    script: "return Math.floor(Math.random() * 100) + 50;"
+    value_type: 3
+    delay: 1m
+    description: "Number of entries in MAC address table"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "mac"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add CPU Usage metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "CPU Usage"
+    key: "switch.cpu.usage"
+    script: "return Math.floor(Math.random() * 20) + 10;"
+    value_type: 0
+    delay: 1m
+    description: "Current CPU utilization percentage"
+    tags:
+      - tag: "component"
+        value: "system"
+      - tag: "metric"
+        value: "cpu"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add Memory Usage metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Memory Usage"
+    key: "switch.memory.usage"
+    script: "return Math.floor(Math.random() * 15) + 50;"
+    value_type: 0
+    delay: 1m
+    description: "Current memory utilization percentage"
+    tags:
+      - tag: "component"
+        value: "system"
+      - tag: "metric"
+        value: "memory"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add Port Errors metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Port Errors"
+    key: "switch.port.errors"
+    script: "return Math.floor(Math.random() * 5);"
+    value_type: 3
+    delay: 1m
+    description: "Number of port errors"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "errors"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add Port Discards metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Port Discards"
+    key: "switch.port.discards"
+    script: "return Math.floor(Math.random() * 3);"
+    value_type: 3
+    delay: 1m
+    description: "Number of port discards"
+    tags:
+      - tag: "component"
+        value: "network"
+      - tag: "metric"
+        value: "discards"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add Temperature metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Temperature"
+    key: "switch.temperature"
+    script: "return Math.floor(Math.random() * 10) + 35;"
+    value_type: 0
+    delay: 1m
+    description: "Switch temperature in Celsius"
+    tags:
+      - tag: "component"
+        value: "hardware"
+      - tag: "metric"
+        value: "temperature"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+
+- name: Add Power Usage metric for Switches
+  zabbix_script_item:
+    server_url: "{{ zabbix_host }}"
+    token: "{{ login_result.token }}"
+    host_id: "{{ item.hostid }}"
+    name: "Power Usage"
+    key: "switch.power.usage"
+    script: "return Math.floor(Math.random() * 20) + 30;"
+    value_type: 0
+    delay: 1m
+    description: "Current power usage in Watts"
+    tags:
+      - tag: "component"
+        value: "hardware"
+      - tag: "metric"
+        value: "power"
+  loop: "{{ host_results.results }}"
+  when: "'switch' in item.item.name"
+

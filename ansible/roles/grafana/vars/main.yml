@@ -1,0 +1,62 @@
+---
+# Grafana Sunucu Bilgileri
+grafana_host: "http://localhost:3000"
+grafana_username: "admin"
+grafana_password: "devops2020"
+
+# Zabbix Sunucu Bilgileri
+zabbix_host: "http://host.docker.internal:8080"
+zabbix_group: "Network Devices"
+
+# SNMP Hosts Configuration
+snmp_hosts:
+  - name: snmp_switch
+    ip: 172.20.0.8
+    port: 161
+    type: snmp
+    device_type: switch
+
+  - name: snmp_router
+    ip: 172.20.0.6
+    port: 161
+    type: snmp
+    device_type: router
+
+  - name: snmp_ap1
+    ip: 172.20.0.7
+    port: 161
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_ap2
+    ip: 172.20.0.9
+    port: 161
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_ap3
+    ip: 172.20.0.5
+    port: 161
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_ap4
+    ip: 172.20.0.10
+    port: 161
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_switch1
+    ip: 172.20.0.11
+    port: 161
+    type: snmp
+    device_type: switch
+
+  - name: snmp_switch2
+    ip: 172.20.0.12
+    port: 161
+    type: snmp
+    device_type: switch
+
+
+

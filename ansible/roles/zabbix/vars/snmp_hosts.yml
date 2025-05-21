@@ -1,0 +1,50 @@
+---
+# SNMP Hosts Configuration
+snmp_hosts:
+  - name: snmp_switch
+    ip: 172.20.0.8
+    port: 161
+    type: snmp
+    device_type: switch
+
+  - name: snmp_router
+    ip: 172.20.0.6
+    port: 162
+    type: snmp
+    device_type: router
+
+  - name: snmp_ap1
+    ip: 172.20.0.7
+    port: 163
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_ap2
+    ip: 172.20.0.9
+    port: 164
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_ap3
+    ip: 172.20.0.5
+    port: 165
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_ap4
+    ip: 172.20.0.10
+    port: 166
+    type: snmp
+    device_type: access_point
+
+  - name: snmp_switch1
+    ip: 172.20.0.11
+    port: 167
+    type: snmp
+    device_type: switch
+
+  - name: snmp_switch2
+    ip: 172.20.0.12
+    port: 168
+    type: snmp
+    device_type: switch

@@ -1,0 +1,73 @@
+---
+- name: Add Zabbix Data Source and Retrieve UID
+  grafana_datasource:
+    grafana_url: "{{ grafana_host }}"
+    username: "{{ grafana_username }}"
+    password: "{{ grafana_password }}"
+    datasource:
+      name: "Zabbix-api-1"
+      type: "alexanderzobnin-zabbix-datasource"
+      url: "{{zabbix_host}}/api_jsonrpc.php"
+      access: "proxy"
+      jsonData:
+        username: "Admin"
+        tlsSkipVerify: true
+      secureJsonData:
+        password: "zabbix"
+  register: zabbix_source
+
+- name: Validate Zabbix UID Retrieval
+  fail:
+    msg: "Failed to retrieve Zabbix UID from response"
+  when: zabbix_source.changed and not zabbix_source.data.datasource.uid
+
+- name: Set UID from New Data Source Creation
+  set_fact:
+    zabbix_uid: "{{ zabbix_source.data.datasource.uid }}"
+  when: zabbix_source.changed
+
+- name: Extract UID from Existing Data Source
+  set_fact:
+    zabbix_uid: "{{ zabbix_source.msg.split('UUID: ')[1] | default('', true) | replace('.', '') }}"
+  when: not zabbix_source.changed and "'already exists' in zabbix_source.msg"
+
+- name: Debug Zabbix UID
+  debug:
+    msg: "Zabbix Data Source UID: {{ zabbix_uid }}"
+  when: zabbix_uid | length > 0
+
+# AP Dashboard Creation Loop
+- name: Create Dashboard for each AP
+  grafana_dashboard:
+    grafana_url: "{{ grafana_host }}"
+    username: "{{ grafana_username }}"
+    password: "{{ grafana_password }}"
+    json_model: "{{ lookup('template', 'ap.json') | from_json }}"
+    new_uid: "{{ zabbix_uid }}"
+    new_group: "{{ zabbix_group }}"
+    new_host: "{{ item.name }}"
+  loop: "{{ snmp_hosts }}"
+  when: item.device_type == 'access_point'
+  register: dashboard_results
+
+# Router Dashboard Creation Loop
+- name: Create Dashboard for each Router
+  grafana_dashboard:
+    grafana_url: "{{ grafana_host }}"
+    username: "{{ grafana_username }}"
+    password: "{{ grafana_password }}"
+    json_model: "{{ lookup('template', 'router.json') | from_json | to_json }}"
+    new_uid: "{{ zabbix_uid }}"
+    new_group: "{{ zabbix_group }}"
+    new_host: "{{ item.name }}"
+  loop: "{{ snmp_hosts }}"
+  when: item.device_type == 'router'
+  register: router_dashboard_results
+
+- name: Debug Router Dashboard Creation Results
+  debug:
+    var: router_dashboard_results
+  when: router_dashboard_results is defined
+
+
+

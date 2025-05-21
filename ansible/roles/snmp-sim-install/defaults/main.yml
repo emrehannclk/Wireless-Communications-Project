@@ -1,0 +1,29 @@
+---
+# Installation directory
+snmp_install_dir: /opt/snmp-sim
+
+# Network configuration
+network_name: zabbix_zbx-net
+
+# SNMP hosts configuration
+snmp_hosts:
+  - name: snmp-router
+    port: 161
+    community: public
+    device_type: router
+    ip: 127.0.0.1
+  - name: snmp-switch
+    port: 162
+    community: public
+    device_type: switch
+    ip: 127.0.0.1
+  - name: snmp-ap1
+    port: 163
+    community: public
+    device_type: access_point
+    ip: 127.0.0.1
+  - name: snmp-ap2
+    port: 164
+    community: public
+    device_type: access_point
+    ip: 127.0.0.1 

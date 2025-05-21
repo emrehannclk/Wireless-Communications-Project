@@ -1,0 +1,13 @@
+---
+# Zabbix Group Configuration
+group: "Network Devices"
+
+# Zabbix Server Configuration
+zabbix_host: "http://host.docker.internal:8080"
+zabbix_username: "Admin"
+zabbix_password: "zabbix" 
+
+# Mattermost Configuration
+mattermost_bot_token: "hbsym6cu3t8ojd1f74ao98y9ih"
+mattermost_server_url: "http://172.29.40.175:8065"
+mattermost_send_to: "p8d6faeha7y6bjdha19k16dw5h" 
